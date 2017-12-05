@@ -3,7 +3,7 @@ updated: 2017-07-19T11:33:58.0769452-04:00
 imports:
 - name: github.com/boltdb/bolt
   version: 583e8937c61f1af6513608ccc75c97b6abdf4ff9
-- name: github.com/btcsuite/btcd
+- name: github.com/phoreproject/btcd
   version: 47885ab8702485be6b6f87a03d4f3be0bc5c982c
   subpackages:
   - blockchain
@@ -18,7 +18,7 @@ imports:
   version: 84c8d2346e9fc8c7b947e243b9c24e6df9fd206a
 - name: github.com/btcsuite/btcrpcclient
   version: c72658166ae09457e6beb14e9112241e352ebd35
-- name: github.com/btcsuite/btcutil
+- name: github.com/phoreproject/btcutil
   version: 5ffa719c3882fd2ec1e8b9f4978066701c31a343
   subpackages:
   - base58

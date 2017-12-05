@@ -11,11 +11,11 @@ import (
 
 	"github.com/btcsuite/btclog"
 	"github.com/btcsuite/btcrpcclient"
-	"github.com/btcsuite/btcwallet/chain"
-	"github.com/btcsuite/btcwallet/rpc/legacyrpc"
-	"github.com/btcsuite/btcwallet/rpc/rpcserver"
-	"github.com/btcsuite/btcwallet/wallet"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/phoreproject/btcwallet/chain"
+	"github.com/phoreproject/btcwallet/rpc/legacyrpc"
+	"github.com/phoreproject/btcwallet/rpc/rpcserver"
+	"github.com/phoreproject/btcwallet/wallet"
+	"github.com/phoreproject/btcwallet/wtxmgr"
 	"github.com/jrick/logrotate/rotator"
 )
 

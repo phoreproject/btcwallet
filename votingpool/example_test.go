@@ -23,14 +23,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/votingpool"
-	"github.com/btcsuite/btcwallet/waddrmgr"
-	"github.com/btcsuite/btcwallet/walletdb"
-	_ "github.com/btcsuite/btcwallet/walletdb/bdb"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/phoreproject/btcd/chaincfg"
+	"github.com/phoreproject/btcd/txscript"
+	"github.com/phoreproject/btcutil"
+	"github.com/phoreproject/btcwallet/votingpool"
+	"github.com/phoreproject/btcwallet/waddrmgr"
+	"github.com/phoreproject/btcwallet/walletdb"
+	_ "github.com/phoreproject/btcwallet/walletdb/bdb"
+	"github.com/phoreproject/btcwallet/wtxmgr"
 )
 
 var (

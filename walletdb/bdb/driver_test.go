@@ -10,8 +10,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcwallet/walletdb"
-	_ "github.com/btcsuite/btcwallet/walletdb/bdb"
+	"github.com/phoreproject/btcwallet/walletdb"
+	_ "github.com/phoreproject/btcwallet/walletdb/bdb"
 )
 
 // dbType is the database type name for this driver.
