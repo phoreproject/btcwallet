@@ -30,7 +30,7 @@ encryption will extend to transactions as well.
 btcwallet is not an SPV client and requires connecting to a local or
 remote btcd instance for asynchronous blockchain queries and
 notifications over websockets.  Full btcd installation instructions
-can be found [here](https://github.com/btcsuite/btcd).  An alternative
+can be found [here](https://github.com/phoreproject/btcd).  An alternative
 SPV mode that is compatible with btcd and Bitcoin Core is planned for
 a future release.
 
@@ -60,9 +60,9 @@ Wallet clients can use one of two RPC servers:
 
 Install the latest MSIs available here:
 
-https://github.com/btcsuite/btcd/releases
+https://github.com/phoreproject/btcd/releases
 
-https://github.com/btcsuite/btcwallet/releases
+https://github.com/phoreproject/btcwallet/releases
 
 ### Windows/Linux/BSD/POSIX - Build from source
 
@@ -96,8 +96,8 @@ For a first time installation, the project and dependency sources can be
 obtained manually with `git` and `glide` (create directories as needed):
 
 ```
-git clone https://github.com/btcsuite/btcwallet $GOPATH/src/github.com/btcsuite/btcwallet
-cd $GOPATH/src/github.com/btcsuite/btcwallet
+git clone https://github.com/phoreproject/btcwallet $GOPATH/src/github.com/phoreproject/btcwallet
+cd $GOPATH/src/github.com/phoreproject/btcwallet
 glide install
 ```
 
@@ -105,7 +105,7 @@ To update an existing source tree, pull the latest changes and install the
 matching dependencies:
 
 ```
-cd $GOPATH/src/github.com/btcsuite/btcwallet
+cd $GOPATH/src/github.com/phoreproject/btcwallet
 git pull
 glide install
 ```
@@ -182,15 +182,15 @@ PS> $editor $env:LOCALAPPDATA\Btcwallet\btcwallet.conf
 
 Linux/BSD/POSIX (Installed from source):
 ```bash
-$ cp $GOPATH/src/github.com/btcsuite/btcd/sample-btcd.conf ~/.btcd/btcd.conf
-$ cp $GOPATH/src/github.com/btcsuite/btcwallet/sample-btcwallet.conf ~/.btcwallet/btcwallet.conf
+$ cp $GOPATH/src/github.com/phoreproject/btcd/sample-btcd.conf ~/.btcd/btcd.conf
+$ cp $GOPATH/src/github.com/phoreproject/btcwallet/sample-btcwallet.conf ~/.btcwallet/btcwallet.conf
 $ $EDITOR ~/.btcd/btcd.conf
 $ $EDITOR ~/.btcwallet/btcwallet.conf
 ```
 
 ## Issue Tracker
 
-The [integrated github issue tracker](https://github.com/btcsuite/btcwallet/issues)
+The [integrated github issue tracker](https://github.com/phoreproject/btcwallet/issues)
 is used for this project.
 
 ## GPG Verification Key

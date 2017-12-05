@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btclog"
-	"github.com/btcsuite/btcwallet/waddrmgr"
-	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/phoreproject/btcwallet/waddrmgr"
+	"github.com/phoreproject/btcwallet/walletdb"
 )
 
 func init() {

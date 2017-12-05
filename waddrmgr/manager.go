@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/hdkeychain"
-	"github.com/btcsuite/btcwallet/internal/zero"
-	"github.com/btcsuite/btcwallet/snacl"
-	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/phoreproject/btcd/chaincfg"
+	"github.com/phoreproject/btcutil"
+	"github.com/phoreproject/btcutil/hdkeychain"
+	"github.com/phoreproject/btcwallet/internal/zero"
+	"github.com/phoreproject/btcwallet/snacl"
+	"github.com/phoreproject/btcwallet/walletdb"
 )
 
 const (

@@ -7,7 +7,7 @@ package bdb
 import (
 	"fmt"
 
-	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/phoreproject/btcwallet/walletdb"
 )
 
 const (

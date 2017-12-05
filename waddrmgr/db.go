@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/phoreproject/btcd/chaincfg"
+	"github.com/phoreproject/btcd/chaincfg/chainhash"
+	"github.com/phoreproject/btcutil/walletdb"
 )
 
 const (

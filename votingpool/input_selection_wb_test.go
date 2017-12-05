@@ -10,11 +10,11 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/walletdb"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/phoreproject/btcd/chaincfg/chainhash"
+	"github.com/phoreproject/btcd/wire"
+	"github.com/phoreproject/btcutil"
+	"github.com/phoreproject/btcwallet/walletdb"
+	"github.com/phoreproject/btcwallet/wtxmgr"
 )
 
 var (

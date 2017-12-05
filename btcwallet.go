@@ -10,14 +10,13 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sync"
 
-	"github.com/btcsuite/btcwallet/chain"
-	"github.com/btcsuite/btcwallet/rpc/legacyrpc"
-	"github.com/btcsuite/btcwallet/wallet"
-	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/phoreproject/btcwallet/chain"
+	"github.com/phoreproject/btcwallet/rpc/legacyrpc"
+	"github.com/phoreproject/btcwallet/wallet"
+	"github.com/phoreproject/btcwallet/walletdb"
 	"github.com/lightninglabs/neutrino"
 )
 

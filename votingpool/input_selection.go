@@ -21,11 +21,11 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwallet/walletdb"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/phoreproject/btcd/chaincfg"
+	"github.com/phoreproject/btcd/txscript"
+	"github.com/phoreproject/btcutil"
+	"github.com/phoreproject/btcwallet/walletdb"
+	"github.com/phoreproject/btcwallet/wtxmgr"
 )
 
 const eligibleInputMinConfirmations = 100
