@@ -13,7 +13,7 @@ import (
 
 	"github.com/phoreproject/btcd/chaincfg"
 	"github.com/phoreproject/btcd/chaincfg/chainhash"
-	"github.com/phoreproject/btcutil/walletdb"
+	"github.com/phoreproject/btcwallet/walletdb"
 )
 
 const (
