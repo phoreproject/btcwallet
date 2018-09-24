@@ -4,7 +4,7 @@ imports:
 - name: github.com/aead/siphash
   version: 83563a290f60225eb120d724600b9690c3fb536f
 - name: github.com/phoreproject/btcd
-  version: d81d8877b8f327112e94e814937143a71d1692a7
+  version: c4b1edd8eb19f66c01568ff2186e4a53988326f0
   subpackages:
   - blockchain
   - btcec
