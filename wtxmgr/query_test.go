@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/phoreproject/btcd/chaincfg/chainhash"
 	"github.com/phoreproject/btcd/wire"
 	"github.com/phoreproject/btcutil"
-	"github.com/btcsuite/btcwallet/walletdb"
 	. "github.com/phoreproject/btcwallet/wtxmgr"
 )
 

@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/crypto/ssh/terminal"
 
+	"github.com/jessevdk/go-flags"
 	"github.com/phoreproject/btcd/btcjson"
 	"github.com/phoreproject/btcd/chaincfg/chainhash"
 	"github.com/phoreproject/btcd/rpcclient"
@@ -22,7 +23,6 @@ import (
 	"github.com/phoreproject/btcwallet/netparams"
 	"github.com/phoreproject/btcwallet/wallet/txauthor"
 	"github.com/phoreproject/btcwallet/wallet/txrules"
-	"github.com/jessevdk/go-flags"
 )
 
 var (

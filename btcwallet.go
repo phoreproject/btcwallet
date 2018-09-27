@@ -13,11 +13,11 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/lightninglabs/neutrino"
 	"github.com/phoreproject/btcwallet/chain"
 	"github.com/phoreproject/btcwallet/rpc/legacyrpc"
 	"github.com/phoreproject/btcwallet/wallet"
 	"github.com/phoreproject/btcwallet/walletdb"
-	"github.com/lightninglabs/neutrino"
 )
 
 var (

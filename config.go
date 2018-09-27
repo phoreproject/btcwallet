@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
+	flags "github.com/jessevdk/go-flags"
+	"github.com/lightninglabs/neutrino"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/internal/cfgutil"
 	"github.com/phoreproject/btcwallet/internal/legacy/keystore"
 	"github.com/phoreproject/btcwallet/netparams"
 	"github.com/phoreproject/btcwallet/wallet"
-	flags "github.com/jessevdk/go-flags"
-	"github.com/lightninglabs/neutrino"
 )
 
 const (

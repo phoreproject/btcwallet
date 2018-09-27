@@ -11,12 +11,12 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/phoreproject/btcd/btcec"
 	"github.com/phoreproject/btcd/chaincfg"
 	"github.com/phoreproject/btcd/chaincfg/chainhash"
 	"github.com/phoreproject/btcd/txscript"
 	"github.com/phoreproject/btcutil"
-	"github.com/davecgh/go-spew/spew"
 )
 
 const dummyDir = ""

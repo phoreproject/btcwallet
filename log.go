@@ -10,15 +10,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/phoreproject/btcd/rpcclient"
 	"github.com/btcsuite/btclog"
+	"github.com/jrick/logrotate/rotator"
+	"github.com/lightninglabs/neutrino"
+	"github.com/phoreproject/btcd/rpcclient"
 	"github.com/phoreproject/btcwallet/chain"
 	"github.com/phoreproject/btcwallet/rpc/legacyrpc"
 	"github.com/phoreproject/btcwallet/rpc/rpcserver"
 	"github.com/phoreproject/btcwallet/wallet"
 	"github.com/phoreproject/btcwallet/wtxmgr"
-	"github.com/jrick/logrotate/rotator"
-	"github.com/lightninglabs/neutrino"
 )
 
 // logWriter implements an io.Writer that outputs to both standard output and

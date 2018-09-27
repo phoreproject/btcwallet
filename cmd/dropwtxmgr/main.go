@@ -11,11 +11,11 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/jessevdk/go-flags"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/walletdb"
 	_ "github.com/phoreproject/btcwallet/walletdb/bdb"
-	"github.com/btcsuite/btcwallet/wtxmgr"
-	"github.com/jessevdk/go-flags"
 )
 
 const defaultNet = "mainnet"

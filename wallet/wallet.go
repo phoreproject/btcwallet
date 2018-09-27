@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/phoreproject/btcd/blockchain"
 	"github.com/phoreproject/btcd/btcec"
 	"github.com/phoreproject/btcd/btcjson"
@@ -23,7 +24,6 @@ import (
 	"github.com/phoreproject/btcd/rpcclient"
 	"github.com/phoreproject/btcd/txscript"
 	"github.com/phoreproject/btcd/wire"
-	"github.com/davecgh/go-spew/spew"
 
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcutil/hdkeychain"
