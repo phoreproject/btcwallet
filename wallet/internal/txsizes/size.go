@@ -5,7 +5,7 @@
 package txsizes
 
 import (
-	"github.com/btcsuite/btcd/blockchain"
+	"github.com/phoreproject/btcd/blockchain"
 	"github.com/phoreproject/btcd/wire"
 
 	h "github.com/phoreproject/btcwallet/internal/helpers"

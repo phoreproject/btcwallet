@@ -15,13 +15,12 @@ import (
 	"strings"
 	"time"
 
-	flags "github.com/jessevdk/go-flags"
-	"github.com/lightninglabs/neutrino"
+	"github.com/jessevdk/go-flags"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/internal/cfgutil"
 	"github.com/phoreproject/btcwallet/internal/legacy/keystore"
-	"github.com/phoreproject/btcwallet/netparams"
 	"github.com/phoreproject/btcwallet/wallet"
+	"github.com/anchaj/neutrino"
 )
 
 const (
@@ -352,26 +351,6 @@ func loadConfig() (*config, []string, error) {
 		if !cfg.RPCCert.ExplicitlySet() {
 			cfg.RPCCert.Value = filepath.Join(cfg.AppDataDir.Value, "rpc.cert")
 		}
-	}
-
-	// Choose the active network params based on the selected network.
-	// Multiple networks can't be selected simultaneously.
-	numNets := 0
-	if cfg.TestNet3 {
-		activeNet = &netparams.TestNet3Params
-		numNets++
-	}
-	if cfg.SimNet {
-		activeNet = &netparams.SimNetParams
-		numNets++
-	}
-	if numNets > 1 {
-		str := "%s: The testnet and simnet params can't be used " +
-			"together -- choose one"
-		err := fmt.Errorf(str, "loadConfig")
-		fmt.Fprintln(os.Stderr, err)
-		parser.WriteHelp(os.Stderr)
-		return nil, nil, err
 	}
 
 	// Append the network type to the log directory so it is "namespaced"

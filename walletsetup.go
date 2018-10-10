@@ -13,7 +13,6 @@ import (
 
 	"github.com/phoreproject/btcd/btcec"
 	"github.com/phoreproject/btcd/chaincfg"
-	"github.com/phoreproject/btcd/wire"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/internal/legacy/keystore"
 	"github.com/phoreproject/btcwallet/internal/prompt"
@@ -33,9 +32,9 @@ func networkDir(dataDir string, chainParams *chaincfg.Params) string {
 	// paramaters will likely be switched to being named "testnet3" in the
 	// future.  This is done to future proof that change, and an upgrade
 	// plan to move the testnet3 data directory can be worked out later.
-	if chainParams.Net == wire.TestNet3 {
-		netname = "testnet"
-	}
+	//if chainParams.Net == wire.TestNet3 {
+	//	netname = "testnet"
+	//}
 
 	return filepath.Join(dataDir, netname)
 }

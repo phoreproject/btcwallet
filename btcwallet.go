@@ -10,14 +10,15 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 
-	"github.com/lightninglabs/neutrino"
 	"github.com/phoreproject/btcwallet/chain"
 	"github.com/phoreproject/btcwallet/rpc/legacyrpc"
 	"github.com/phoreproject/btcwallet/wallet"
 	"github.com/phoreproject/btcwallet/walletdb"
+	"github.com/anchaj/neutrino"
 )
 
 var (

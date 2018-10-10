@@ -5,7 +5,7 @@
 package wallet
 
 import (
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/phoreproject/btcd/txscript"
 	"github.com/phoreproject/btcd/wire"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/chain"

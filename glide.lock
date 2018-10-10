@@ -86,7 +86,7 @@ imports:
   version: f391b8402d23024e7c0f624b31267a89998fca95
 - name: github.com/lightninglabs/gozmq
   version: 462a8a75388506b68f76661af8d649f0b88e5301
-- name: github.com/lightninglabs/neutrino
+- name: github.com/anchaj/neutrino
   version: 31332f9c7a241da72835ad33ff340c3998e30de8
   subpackages:
   - cache
