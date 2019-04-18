@@ -12,9 +12,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/btcsuite/golangcrypto/ssh/terminal"
 	"github.com/phoreproject/btcutil/hdkeychain"
 	"github.com/phoreproject/btcwallet/internal/legacy/keystore"
-	"github.com/btcsuite/golangcrypto/ssh/terminal"
 )
 
 // ProvideSeed is used to prompt for the wallet seed which maybe required during

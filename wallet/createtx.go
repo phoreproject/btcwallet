@@ -1,4 +1,5 @@
-// Copyright (c) 2013-2016 The btcsuite developers
+// Copyright (c) 2013-2017 The btcsuite developers
+// Copyright (c) 2015-2016 The btcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -14,6 +15,7 @@ import (
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/waddrmgr"
 	"github.com/phoreproject/btcwallet/wallet/txauthor"
+	"github.com/phoreproject/btcwallet/walletdb"
 	"github.com/phoreproject/btcwallet/wtxmgr"
 )
 
@@ -35,17 +37,21 @@ func makeInputSource(eligible []wtxmgr.Credit) txauthor.InputSource {
 	currentTotal := btcutil.Amount(0)
 	currentInputs := make([]*wire.TxIn, 0, len(eligible))
 	currentScripts := make([][]byte, 0, len(eligible))
+	currentInputValues := make([]btcutil.Amount, 0, len(eligible))
 
-	return func(target btcutil.Amount) (btcutil.Amount, []*wire.TxIn, [][]byte, error) {
+	return func(target btcutil.Amount) (btcutil.Amount, []*wire.TxIn,
+		[]btcutil.Amount, [][]byte, error) {
+
 		for currentTotal < target && len(eligible) != 0 {
 			nextCredit := &eligible[0]
 			eligible = eligible[1:]
-			nextInput := wire.NewTxIn(&nextCredit.OutPoint, nil)
+			nextInput := wire.NewTxIn(&nextCredit.OutPoint, nil, nil)
 			currentTotal += nextCredit.Amount
 			currentInputs = append(currentInputs, nextInput)
 			currentScripts = append(currentScripts, nextCredit.PkScript)
+			currentInputValues = append(currentInputValues, nextCredit.Amount)
 		}
-		return currentTotal, currentInputs, currentScripts, nil
+		return currentTotal, currentInputs, currentInputValues, currentScripts, nil
 	}
 }
 
@@ -53,13 +59,15 @@ func makeInputSource(eligible []wtxmgr.Credit) txauthor.InputSource {
 // address manager.
 type secretSource struct {
 	*waddrmgr.Manager
+	addrmgrNs walletdb.ReadBucket
 }
 
 func (s secretSource) GetKey(addr btcutil.Address) (*btcec.PrivateKey, bool, error) {
-	ma, err := s.Address(addr)
+	ma, err := s.Address(s.addrmgrNs, addr)
 	if err != nil {
 		return nil, false, err
 	}
+
 	mpka, ok := ma.(waddrmgr.ManagedPubKeyAddress)
 	if !ok {
 		e := fmt.Errorf("managed address type for %v is `%T` but "+
@@ -74,10 +82,11 @@ func (s secretSource) GetKey(addr btcutil.Address) (*btcec.PrivateKey, bool, err
 }
 
 func (s secretSource) GetScript(addr btcutil.Address) ([]byte, error) {
-	ma, err := s.Address(addr)
+	ma, err := s.Address(s.addrmgrNs, addr)
 	if err != nil {
 		return nil, err
 	}
+
 	msa, ok := ma.(waddrmgr.ManagedScriptAddress)
 	if !ok {
 		e := fmt.Errorf("managed address type for %v is `%T` but "+
@@ -92,66 +101,65 @@ func (s secretSource) GetScript(addr btcutil.Address) ([]byte, error) {
 // UTXO set and minconf policy. An additional output may be added to return
 // change to the wallet.  An appropriate fee is included based on the wallet's
 // current relay fee.  The wallet must be unlocked to create the transaction.
-func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32, minconf int32) (*txauthor.AuthoredTx, error) {
-	// Address manager must be unlocked to compose transaction.  Grab
-	// the unlock if possible (to prevent future unlocks), or return the
-	// error if already locked.
-	heldUnlock, err := w.HoldUnlock()
-	if err != nil {
-		return nil, err
-	}
-	defer heldUnlock.Release()
+func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32,
+	minconf int32, feeSatPerKb btcutil.Amount) (tx *txauthor.AuthoredTx, err error) {
 
 	chainClient, err := w.requireChainClient()
 	if err != nil {
 		return nil, err
 	}
 
-	// Get current block's height and hash.
-	bs, err := chainClient.BlockStamp()
-	if err != nil {
-		return nil, err
-	}
+	err = walletdb.Update(w.db, func(dbtx walletdb.ReadWriteTx) error {
+		addrmgrNs := dbtx.ReadWriteBucket(waddrmgrNamespaceKey)
 
-	eligible, err := w.findEligibleOutputs(account, minconf, bs)
-	if err != nil {
-		return nil, err
-	}
-
-	inputSource := makeInputSource(eligible)
-	changeSource := func() ([]byte, error) {
-		// Derive the change output script.  As a hack to allow spending from
-		// the imported account, change addresses are created from account 0.
-		var changeAddr btcutil.Address
-		if account == waddrmgr.ImportedAddrAccount {
-			changeAddr, err = w.NewChangeAddress(0)
-		} else {
-			changeAddr, err = w.NewChangeAddress(account)
-		}
+		// Get current block's height and hash.
+		bs, err := chainClient.BlockStamp()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		return txscript.PayToAddrScript(changeAddr)
-	}
-	tx, err := txauthor.NewUnsignedTransaction(outputs, w.RelayFee(),
-		inputSource, changeSource)
+
+		eligible, err := w.findEligibleOutputs(dbtx, account, minconf, bs)
+		if err != nil {
+			return err
+		}
+
+		inputSource := makeInputSource(eligible)
+		changeSource := func() ([]byte, error) {
+			// Derive the change output script.  As a hack to allow
+			// spending from the imported account, change addresses
+			// are created from account 0.
+			var changeAddr btcutil.Address
+			var err error
+			if account == waddrmgr.ImportedAddrAccount {
+				changeAddr, err = w.newChangeAddress(addrmgrNs, 0)
+			} else {
+				changeAddr, err = w.newChangeAddress(addrmgrNs, account)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return txscript.PayToAddrScript(changeAddr)
+		}
+		tx, err = txauthor.NewUnsignedTransaction(outputs, feeSatPerKb,
+			inputSource, changeSource)
+		if err != nil {
+			return err
+		}
+
+		// Randomize change position, if change exists, before signing.
+		// This doesn't affect the serialize size, so the change amount
+		// will still be valid.
+		if tx.ChangeIndex >= 0 {
+			tx.RandomizeChangePosition()
+		}
+
+		return tx.AddAllInputScripts(secretSource{w.Manager, addrmgrNs})
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Randomize change position, if change exists, before signing.  This
-	// doesn't affect the serialize size, so the change amount will still be
-	// valid.
-	if tx.ChangeIndex >= 0 {
-		tx.RandomizeChangePosition()
-	}
-
-	err = tx.AddAllInputScripts(secretSource{w.Manager})
-	if err != nil {
-		return nil, err
-	}
-
-	err = validateMsgTx(tx.Tx, tx.PrevScripts)
+	err = validateMsgTx(tx.Tx, tx.PrevScripts, tx.PrevInputValues)
 	if err != nil {
 		return nil, err
 	}
@@ -165,8 +173,11 @@ func (w *Wallet) txToOutputs(outputs []*wire.TxOut, account uint32, minconf int3
 	return tx, nil
 }
 
-func (w *Wallet) findEligibleOutputs(account uint32, minconf int32, bs *waddrmgr.BlockStamp) ([]wtxmgr.Credit, error) {
-	unspent, err := w.TxStore.UnspentOutputs()
+func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minconf int32, bs *waddrmgr.BlockStamp) ([]wtxmgr.Credit, error) {
+	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
+	txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
+
+	unspent, err := w.TxStore.UnspentOutputs(txmgrNs)
 	if err != nil {
 		return nil, err
 	}
@@ -208,11 +219,10 @@ func (w *Wallet) findEligibleOutputs(account uint32, minconf int32, bs *waddrmgr
 		if err != nil || len(addrs) != 1 {
 			continue
 		}
-		addrAcct, err := w.Manager.AddrAccount(addrs[0])
+		_, addrAcct, err := w.Manager.AddrAccount(addrmgrNs, addrs[0])
 		if err != nil || addrAcct != account {
 			continue
 		}
-
 		eligible = append(eligible, *output)
 	}
 	return eligible, nil
@@ -221,10 +231,11 @@ func (w *Wallet) findEligibleOutputs(account uint32, minconf int32, bs *waddrmgr
 // validateMsgTx verifies transaction input scripts for tx.  All previous output
 // scripts from outputs redeemed by the transaction, in the same order they are
 // spent, must be passed in the prevScripts slice.
-func validateMsgTx(tx *wire.MsgTx, prevScripts [][]byte) error {
+func validateMsgTx(tx *wire.MsgTx, prevScripts [][]byte, inputValues []btcutil.Amount) error {
+	hashCache := txscript.NewTxSigHashes(tx)
 	for i, prevScript := range prevScripts {
 		vm, err := txscript.NewEngine(prevScript, tx, i,
-			txscript.StandardVerifyFlags, nil)
+			txscript.StandardVerifyFlags, nil, hashCache, int64(inputValues[i]))
 		if err != nil {
 			return fmt.Errorf("cannot create script engine: %s", err)
 		}

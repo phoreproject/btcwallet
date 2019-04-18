@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/phoreproject/btcd/btcec"
 	"github.com/phoreproject/btcd/chaincfg"
-	"github.com/phoreproject/btcd/wire"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/internal/legacy/keystore"
 	"github.com/phoreproject/btcwallet/internal/prompt"
@@ -32,9 +32,9 @@ func networkDir(dataDir string, chainParams *chaincfg.Params) string {
 	// paramaters will likely be switched to being named "testnet3" in the
 	// future.  This is done to future proof that change, and an upgrade
 	// plan to move the testnet3 data directory can be worked out later.
-	if chainParams.Net == wire.TestNet3 {
-		netname = "testnet"
-	}
+	//if chainParams.Net == wire.TestNet3 {
+	//	netname = "testnet"
+	//}
 
 	return filepath.Join(dataDir, netname)
 }
@@ -42,7 +42,7 @@ func networkDir(dataDir string, chainParams *chaincfg.Params) string {
 // convertLegacyKeystore converts all of the addresses in the passed legacy
 // key store to the new waddrmgr.Manager format.  Both the legacy keystore and
 // the new manager must be unlocked.
-func convertLegacyKeystore(legacyKeyStore *keystore.Store, manager *waddrmgr.Manager) error {
+func convertLegacyKeystore(legacyKeyStore *keystore.Store, w *wallet.Wallet) error {
 	netParams := legacyKeyStore.Net()
 	blockStamp := waddrmgr.BlockStamp{
 		Height: 0,
@@ -68,7 +68,8 @@ func convertLegacyKeystore(legacyKeyStore *keystore.Store, manager *waddrmgr.Man
 				continue
 			}
 
-			_, err = manager.ImportPrivateKey(wif, &blockStamp)
+			_, err = w.ImportPrivateKey(waddrmgr.KeyScopeBIP0044,
+				wif, &blockStamp, false)
 			if err != nil {
 				fmt.Printf("WARN: Failed to import private "+
 					"key for address %v: %v\n",
@@ -77,7 +78,7 @@ func convertLegacyKeystore(legacyKeyStore *keystore.Store, manager *waddrmgr.Man
 			}
 
 		case keystore.ScriptAddress:
-			_, err := manager.ImportScript(addr.Script(), &blockStamp)
+			_, err := w.ImportP2SHRedeemScript(addr.Script())
 			if err != nil {
 				fmt.Printf("WARN: Failed to import "+
 					"pay-to-script-hash script for "+
@@ -100,7 +101,7 @@ func convertLegacyKeystore(legacyKeyStore *keystore.Store, manager *waddrmgr.Man
 // provided path.
 func createWallet(cfg *config) error {
 	dbDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
-	loader := wallet.NewLoader(activeNet.Params, dbDir)
+	loader := wallet.NewLoader(activeNet.Params, dbDir, 250)
 
 	// When there is a legacy keystore, open it now to ensure any errors
 	// don't end up exiting the process after the user has spent time
@@ -146,15 +147,18 @@ func createWallet(cfg *config) error {
 
 			fmt.Println("Importing addresses from existing wallet...")
 
-			err := w.Manager.Unlock(privPass)
+			lockChan := make(chan time.Time, 1)
+			defer func() {
+				lockChan <- time.Time{}
+			}()
+			err := w.Unlock(privPass, lockChan)
 			if err != nil {
 				fmt.Printf("ERR: Failed to unlock new wallet "+
 					"during old wallet key import: %v", err)
 				return
 			}
-			defer w.Manager.Lock()
 
-			err = convertLegacyKeystore(legacyKeyStore, w.Manager)
+			err = convertLegacyKeystore(legacyKeyStore, w)
 			if err != nil {
 				fmt.Printf("ERR: Failed to import keys from old "+
 					"wallet format: %v", err)
@@ -188,7 +192,7 @@ func createWallet(cfg *config) error {
 	}
 
 	fmt.Println("Creating the wallet...")
-	w, err := loader.CreateNewWallet(pubPass, privPass, seed)
+	w, err := loader.CreateNewWallet(pubPass, privPass, seed, time.Now())
 	if err != nil {
 		return err
 	}
@@ -221,7 +225,7 @@ func createSimulationWallet(cfg *config) error {
 	defer db.Close()
 
 	// Create the wallet.
-	err = wallet.Create(db, pubPass, privPass, nil, activeNet.Params)
+	err = wallet.Create(db, pubPass, privPass, nil, activeNet.Params, time.Now())
 	if err != nil {
 		return err
 	}

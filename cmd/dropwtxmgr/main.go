@@ -6,14 +6,16 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/jessevdk/go-flags"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/walletdb"
 	_ "github.com/phoreproject/btcwallet/walletdb/bdb"
-	"github.com/jessevdk/go-flags"
+	"github.com/phoreproject/btcwallet/wtxmgr"
 )
 
 const defaultNet = "mainnet"
@@ -36,9 +38,16 @@ func init() {
 	}
 }
 
-// Namespace keys.
 var (
-	wtxmgrNamespace = []byte("wtxmgr")
+	// Namespace keys.
+	syncBucketName    = []byte("sync")
+	waddrmgrNamespace = []byte("waddrmgr")
+	wtxmgrNamespace   = []byte("wtxmgr")
+
+	// Sync related key names (sync bucket).
+	syncedToName     = []byte("syncedto")
+	startBlockName   = []byte("startblock")
+	recentBlocksName = []byte("recentblocks")
 )
 
 func yes(s string) bool {
@@ -103,9 +112,33 @@ func mainInt() int {
 	}
 	defer db.Close()
 	fmt.Println("Dropping wtxmgr namespace")
-	err = db.DeleteNamespace(wtxmgrNamespace)
-	if err != nil && err != walletdb.ErrBucketNotFound {
-		fmt.Println("Failed to drop namespace:", err)
+	err = walletdb.Update(db, func(tx walletdb.ReadWriteTx) error {
+		err := tx.DeleteTopLevelBucket(wtxmgrNamespace)
+		if err != nil && err != walletdb.ErrBucketNotFound {
+			return err
+		}
+		ns, err := tx.CreateTopLevelBucket(wtxmgrNamespace)
+		if err != nil {
+			return err
+		}
+		err = wtxmgr.Create(ns)
+		if err != nil {
+			return err
+		}
+		ns = tx.ReadWriteBucket(waddrmgrNamespace).NestedReadWriteBucket(syncBucketName)
+		startBlock := ns.Get(startBlockName)
+		err = ns.Put(syncedToName, startBlock)
+		if err != nil {
+			return err
+		}
+		recentBlocks := make([]byte, 40)
+		copy(recentBlocks[0:4], startBlock[0:4])
+		copy(recentBlocks[8:], startBlock[4:])
+		binary.LittleEndian.PutUint32(recentBlocks[4:8], uint32(1))
+		return ns.Put(recentBlocksName, recentBlocks)
+	})
+	if err != nil {
+		fmt.Println("Failed to drop and re-create namespace:", err)
 		return 1
 	}
 

@@ -10,18 +10,19 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/crypto/ssh/terminal"
+
+	"github.com/jessevdk/go-flags"
 	"github.com/phoreproject/btcd/btcjson"
 	"github.com/phoreproject/btcd/chaincfg/chainhash"
+	"github.com/phoreproject/btcd/rpcclient"
 	"github.com/phoreproject/btcd/txscript"
 	"github.com/phoreproject/btcd/wire"
-	"github.com/btcsuite/btcrpcclient"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/internal/cfgutil"
 	"github.com/phoreproject/btcwallet/netparams"
 	"github.com/phoreproject/btcwallet/wallet/txauthor"
 	"github.com/phoreproject/btcwallet/wallet/txrules"
-	"github.com/btcsuite/golangcrypto/ssh/terminal"
-	"github.com/jessevdk/go-flags"
 )
 
 var (
@@ -141,6 +142,7 @@ func makeInputSource(outputs []btcjson.ListUnspentResult) txauthor.InputSource {
 	var (
 		totalInputValue btcutil.Amount
 		inputs          = make([]*wire.TxIn, 0, len(outputs))
+		inputValues     = make([]btcutil.Amount, 0, len(outputs))
 		sourceErr       error
 	)
 	for _, output := range outputs {
@@ -170,22 +172,23 @@ func makeInputSource(outputs []btcjson.ListUnspentResult) txauthor.InputSource {
 			break
 		}
 
-		inputs = append(inputs, wire.NewTxIn(&previousOutPoint, nil))
+		inputs = append(inputs, wire.NewTxIn(&previousOutPoint, nil, nil))
+		inputValues = append(inputValues, outputAmount)
 	}
 
 	if sourceErr == nil && totalInputValue == 0 {
 		sourceErr = noInputValue{}
 	}
 
-	return func(btcutil.Amount) (btcutil.Amount, []*wire.TxIn, [][]byte, error) {
-		return totalInputValue, inputs, nil, sourceErr
+	return func(btcutil.Amount) (btcutil.Amount, []*wire.TxIn, []btcutil.Amount, [][]byte, error) {
+		return totalInputValue, inputs, inputValues, nil, sourceErr
 	}
 }
 
 // makeDestinationScriptSource creates a ChangeSource which is used to receive
 // all correlated previous input value.  A non-change address is created by this
 // function.
-func makeDestinationScriptSource(rpcClient *btcrpcclient.Client, accountName string) txauthor.ChangeSource {
+func makeDestinationScriptSource(rpcClient *rpcclient.Client, accountName string) txauthor.ChangeSource {
 	return func() ([]byte, error) {
 		destinationAddress, err := rpcClient.GetNewAddress(accountName)
 		if err != nil {
@@ -213,7 +216,7 @@ func sweep() error {
 	if err != nil {
 		return errContext(err, "failed to read RPC certificate")
 	}
-	rpcClient, err := btcrpcclient.New(&btcrpcclient.ConnConfig{
+	rpcClient, err := rpcclient.New(&rpcclient.ConnConfig{
 		Host:         opts.RPCConnect,
 		User:         opts.RPCUsername,
 		Pass:         rpcPassword,

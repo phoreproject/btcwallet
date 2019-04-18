@@ -9,11 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/phoreproject/btcd/btcjson"
 	"github.com/phoreproject/btcd/chaincfg"
 	"github.com/phoreproject/btcd/chaincfg/chainhash"
 	"github.com/phoreproject/btcd/rpcclient"
+	"github.com/phoreproject/btcd/wire"
 	"github.com/phoreproject/btcutil"
-	"github.com/phoreproject/btcd/btcjson"
+	"github.com/phoreproject/btcutil/gcs"
+	"github.com/phoreproject/btcutil/gcs/builder"
 	"github.com/phoreproject/btcwallet/waddrmgr"
 	"github.com/phoreproject/btcwallet/wtxmgr"
 )
@@ -21,8 +24,8 @@ import (
 // RPCClient represents a persistent client connection to a bitcoin RPC server
 // for information regarding the current best block chain.
 type RPCClient struct {
-	*btcrpcclient.Client
-	connConfig        *btcrpcclient.ConnConfig // Work around unexported field
+	*rpcclient.Client
+	connConfig        *rpcclient.ConnConfig // Work around unexported field
 	chainParams       *chaincfg.Params
 	reconnectAttempts int
 
@@ -50,13 +53,13 @@ func NewRPCClient(chainParams *chaincfg.Params, connect, user, pass string, cert
 	}
 
 	client := &RPCClient{
-		connConfig: &btcrpcclient.ConnConfig{
+		connConfig: &rpcclient.ConnConfig{
 			Host:                 connect,
 			Endpoint:             "ws",
 			User:                 user,
 			Pass:                 pass,
 			Certificates:         certs,
-			DisableAutoReconnect: true,
+			DisableAutoReconnect: false,
 			DisableConnectOnNew:  true,
 			DisableTLS:           disableTLS,
 		},
@@ -67,7 +70,7 @@ func NewRPCClient(chainParams *chaincfg.Params, connect, user, pass string, cert
 		currentBlock:        make(chan *waddrmgr.BlockStamp),
 		quit:                make(chan struct{}),
 	}
-	ntfnCallbacks := &btcrpcclient.NotificationHandlers{
+	ntfnCallbacks := &rpcclient.NotificationHandlers{
 		OnClientConnected:   client.onClientConnect,
 		OnBlockConnected:    client.onBlockConnected,
 		OnBlockDisconnected: client.onBlockDisconnected,
@@ -76,12 +79,17 @@ func NewRPCClient(chainParams *chaincfg.Params, connect, user, pass string, cert
 		OnRescanFinished:    client.onRescanFinished,
 		OnRescanProgress:    client.onRescanProgress,
 	}
-	rpcClient, err := btcrpcclient.New(client.connConfig, ntfnCallbacks)
+	rpcClient, err := rpcclient.New(client.connConfig, ntfnCallbacks)
 	if err != nil {
 		return nil, err
 	}
 	client.Client = rpcClient
 	return client, nil
+}
+
+// BackEnd returns the name of the driver.
+func (c *RPCClient) BackEnd() string {
+	return "btcd"
 }
 
 // Start attempts to establish a client connection with the remote server.
@@ -132,53 +140,27 @@ func (c *RPCClient) Stop() {
 	c.quitMtx.Unlock()
 }
 
+// Rescan wraps the normal Rescan command with an additional paramter that
+// allows us to map an oupoint to the address in the chain that it pays to.
+// This is useful when using BIP 158 filters as they include the prev pkScript
+// rather than the full outpoint.
+func (c *RPCClient) Rescan(startHash *chainhash.Hash, addrs []btcutil.Address,
+	outPoints map[wire.OutPoint]btcutil.Address) error {
+
+	flatOutpoints := make([]*wire.OutPoint, 0, len(outPoints))
+	for ops := range outPoints {
+		flatOutpoints = append(flatOutpoints, &ops)
+	}
+
+	return c.Client.Rescan(startHash, addrs, flatOutpoints)
+}
+
 // WaitForShutdown blocks until both the client has finished disconnecting
 // and all handlers have exited.
 func (c *RPCClient) WaitForShutdown() {
 	c.Client.WaitForShutdown()
 	c.wg.Wait()
 }
-
-// Notification types.  These are defined here and processed from from reading
-// a notificationChan to avoid handling these notifications directly in
-// btcrpcclient callbacks, which isn't very Go-like and doesn't allow
-// blocking client calls.
-type (
-	// ClientConnected is a notification for when a client connection is
-	// opened or reestablished to the chain server.
-	ClientConnected struct{}
-
-	// BlockConnected is a notification for a newly-attached block to the
-	// best chain.
-	BlockConnected wtxmgr.BlockMeta
-
-	// BlockDisconnected is a notifcation that the block described by the
-	// BlockStamp was reorganized out of the best chain.
-	BlockDisconnected wtxmgr.BlockMeta
-
-	// RelevantTx is a notification for a transaction which spends wallet
-	// inputs or pays to a watched address.
-	RelevantTx struct {
-		TxRecord *wtxmgr.TxRecord
-		Block    *wtxmgr.BlockMeta // nil if unmined
-	}
-
-	// RescanProgress is a notification describing the current status
-	// of an in-progress rescan.
-	RescanProgress struct {
-		Hash   *chainhash.Hash
-		Height int32
-		Time   time.Time
-	}
-
-	// RescanFinished is a notification that a previous rescan request
-	// has finished.
-	RescanFinished struct {
-		Hash   *chainhash.Hash
-		Height int32
-		Time   time.Time
-	}
-)
 
 // Notifications returns a channel of parsed notifications sent by the remote
 // bitcoin RPC server.  This channel must be continually read or the process
@@ -199,9 +181,96 @@ func (c *RPCClient) BlockStamp() (*waddrmgr.BlockStamp, error) {
 	}
 }
 
+// FilterBlocks scans the blocks contained in the FilterBlocksRequest for any
+// addresses of interest. For each requested block, the corresponding compact
+// filter will first be checked for matches, skipping those that do not report
+// anything. If the filter returns a postive match, the full block will be
+// fetched and filtered. This method returns a FilterBlocksReponse for the first
+// block containing a matching address. If no matches are found in the range of
+// blocks requested, the returned response will be nil.
+func (c *RPCClient) FilterBlocks(
+	req *FilterBlocksRequest) (*FilterBlocksResponse, error) {
+
+	blockFilterer := NewBlockFilterer(c.chainParams, req)
+
+	// Construct the watchlist using the addresses and outpoints contained
+	// in the filter blocks request.
+	watchList, err := buildFilterBlocksWatchList(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Iterate over the requested blocks, fetching the compact filter for
+	// each one, and matching it against the watchlist generated above. If
+	// the filter returns a positive match, the full block is then requested
+	// and scanned for addresses using the block filterer.
+	for i, blk := range req.Blocks {
+		rawFilter, err := c.GetCFilter(&blk.Hash, wire.GCSFilterRegular)
+		if err != nil {
+			return nil, err
+		}
+
+		// Ensure the filter is large enough to be deserialized.
+		if len(rawFilter.Data) < 4 {
+			continue
+		}
+
+		filter, err := gcs.FromNBytes(
+			builder.DefaultP, builder.DefaultM, rawFilter.Data,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Skip any empty filters.
+		if filter.N() == 0 {
+			continue
+		}
+
+		key := builder.DeriveKey(&blk.Hash)
+		matched, err := filter.MatchAny(key, watchList)
+		if err != nil {
+			return nil, err
+		} else if !matched {
+			continue
+		}
+
+		log.Infof("Fetching block height=%d hash=%v",
+			blk.Height, blk.Hash)
+
+		rawBlock, err := c.GetBlock(&blk.Hash)
+		if err != nil {
+			return nil, err
+		}
+
+		if !blockFilterer.FilterBlock(rawBlock) {
+			continue
+		}
+
+		// If any external or internal addresses were detected in this
+		// block, we return them to the caller so that the rescan
+		// windows can widened with subsequent addresses. The
+		// `BatchIndex` is returned so that the caller can compute the
+		// *next* block from which to begin again.
+		resp := &FilterBlocksResponse{
+			BatchIndex:         uint32(i),
+			BlockMeta:          blk,
+			FoundExternalAddrs: blockFilterer.FoundExternal,
+			FoundInternalAddrs: blockFilterer.FoundInternal,
+			FoundOutPoints:     blockFilterer.FoundOutPoints,
+			RelevantTxns:       blockFilterer.RelevantTxns,
+		}
+
+		return resp, nil
+	}
+
+	// No addresses were found for this range.
+	return nil, nil
+}
+
 // parseBlock parses a btcws definition of the block a tx is mined it to the
 // Block structure of the wtxmgr package, and the block index.  This is done
-// here since btcrpcclient doesn't parse this nicely for us.
+// here since rpcclient doesn't parse this nicely for us.
 func parseBlock(block *btcjson.BlockDetails) (*wtxmgr.BlockMeta, error) {
 	if block == nil {
 		return nil, nil
@@ -317,7 +386,6 @@ func (c *RPCClient) handler() {
 	enqueue := c.enqueueNotification
 	var dequeue chan interface{}
 	var next interface{}
-	pingChan := time.After(time.Minute)
 out:
 	for {
 		select {
@@ -337,7 +405,6 @@ out:
 				dequeue = c.dequeueNotification
 			}
 			notifications = append(notifications, n)
-			pingChan = time.After(time.Minute)
 
 		case dequeue <- next:
 			if n, ok := next.(BlockConnected); ok {
@@ -360,42 +427,6 @@ out:
 				dequeue = nil
 			}
 
-		case <-pingChan:
-			// No notifications were received in the last 60s.
-			// Ensure the connection is still active by making a new
-			// request to the server.
-			// TODO: A minute timeout is used to prevent the handler
-			// loop from blocking here forever, but this is much larger
-			// than it needs to be due to btcd processing websocket
-			// requests synchronously (see
-			// https://github.com/phoreproject/btcd/issues/504).  Decrease
-			// this to something saner like 3s when the above issue is
-			// fixed.
-			type sessionResult struct {
-				err error
-			}
-			sessionResponse := make(chan sessionResult, 1)
-			go func() {
-				_, err := c.Session()
-				sessionResponse <- sessionResult{err}
-			}()
-
-			select {
-			case resp := <-sessionResponse:
-				if resp.err != nil {
-					log.Errorf("Failed to receive session "+
-						"result: %v", resp.err)
-					c.Stop()
-					break out
-				}
-				pingChan = time.After(time.Minute)
-
-			case <-time.After(time.Minute):
-				log.Errorf("Timeout waiting for session RPC")
-				c.Stop()
-				break out
-			}
-
 		case c.currentBlock <- bs:
 
 		case <-c.quit:
@@ -408,9 +439,9 @@ out:
 	c.wg.Done()
 }
 
-// POSTClient creates the equivalent HTTP POST btcrpcclient.Client.
-func (c *RPCClient) POSTClient() (*btcrpcclient.Client, error) {
+// POSTClient creates the equivalent HTTP POST rpcclient.Client.
+func (c *RPCClient) POSTClient() (*rpcclient.Client, error) {
 	configCopy := *c.connConfig
 	configCopy.HTTPPostMode = true
-	return btcrpcclient.New(&configCopy, nil)
+	return rpcclient.New(&configCopy, nil)
 }

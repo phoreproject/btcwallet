@@ -1,10 +1,11 @@
-// Copyright (c) 2013-2014 The btcsuite developers
+// Copyright (c) 2013-2017 The btcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
 package wallet
 
 import (
+	"github.com/phoreproject/btcd/txscript"
 	"github.com/phoreproject/btcd/wire"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/chain"
@@ -34,7 +35,7 @@ type RescanFinishedMsg struct {
 type RescanJob struct {
 	InitialSync bool
 	Addrs       []btcutil.Address
-	OutPoints   []*wire.OutPoint
+	OutPoints   map[wire.OutPoint]btcutil.Address
 	BlockStamp  waddrmgr.BlockStamp
 	err         chan error
 }
@@ -44,7 +45,7 @@ type RescanJob struct {
 type rescanBatch struct {
 	initialSync bool
 	addrs       []btcutil.Address
-	outpoints   []*wire.OutPoint
+	outpoints   map[wire.OutPoint]btcutil.Address
 	bs          waddrmgr.BlockStamp
 	errChans    []chan error
 }
@@ -78,7 +79,11 @@ func (b *rescanBatch) merge(job *RescanJob) {
 		b.initialSync = true
 	}
 	b.addrs = append(b.addrs, job.Addrs...)
-	b.outpoints = append(b.outpoints, job.OutPoints...)
+
+	for op, addr := range job.OutPoints {
+		b.outpoints[op] = addr
+	}
+
 	if job.BlockStamp.Height < b.bs.Height {
 		b.bs = job.BlockStamp
 	}
@@ -123,6 +128,12 @@ out:
 		case n := <-w.rescanNotifications:
 			switch n := n.(type) {
 			case *chain.RescanProgress:
+				if curBatch == nil {
+					log.Warnf("Received rescan progress " +
+						"notification but no rescan " +
+						"currently running")
+					continue
+				}
 				w.rescanProgress <- &RescanProgressMsg{
 					Addresses:    curBatch.addrs,
 					Notification: n,
@@ -174,16 +185,6 @@ out:
 			log.Infof("Rescanned through block %v (height %d)",
 				n.Hash, n.Height)
 
-			bs := waddrmgr.BlockStamp{
-				Hash:   *n.Hash,
-				Height: n.Height,
-			}
-			if err := w.Manager.SetSyncedTo(&bs); err != nil {
-				log.Errorf("Failed to update address manager "+
-					"sync state for hash %v (height %d): %v",
-					n.Hash, n.Height, err)
-			}
-
 		case msg := <-w.rescanFinished:
 			n := msg.Notification
 			addrs := msg.Addresses
@@ -191,15 +192,8 @@ out:
 			log.Infof("Finished rescan for %d %s (synced to block "+
 				"%s, height %d)", len(addrs), noun, n.Hash,
 				n.Height)
-			bs := waddrmgr.BlockStamp{Height: n.Height, Hash: *n.Hash}
-			if err := w.Manager.SetSyncedTo(&bs); err != nil {
-				log.Errorf("Failed to update address manager "+
-					"sync state for hash %v (height %d): %v",
-					n.Hash, n.Height, err)
-			}
-			w.SetChainSynced(true)
 
-			go w.ResendUnminedTxs()
+			go w.resendUnminedTxs()
 
 		case <-quit:
 			break out
@@ -251,16 +245,38 @@ out:
 // current best block in the main chain, and is considered an initial sync
 // rescan.
 func (w *Wallet) Rescan(addrs []btcutil.Address, unspent []wtxmgr.Credit) error {
-	outpoints := make([]*wire.OutPoint, len(unspent))
-	for i, output := range unspent {
-		outpoints[i] = &output.OutPoint
+	return w.rescanWithTarget(addrs, unspent, nil)
+}
+
+// rescanWithTarget performs a rescan starting at the optional startStamp. If
+// none is provided, the rescan will begin from the manager's sync tip.
+func (w *Wallet) rescanWithTarget(addrs []btcutil.Address,
+	unspent []wtxmgr.Credit, startStamp *waddrmgr.BlockStamp) error {
+
+	outpoints := make(map[wire.OutPoint]btcutil.Address, len(unspent))
+	for _, output := range unspent {
+		_, outputAddrs, _, err := txscript.ExtractPkScriptAddrs(
+			output.PkScript, w.chainParams,
+		)
+		if err != nil {
+			return err
+		}
+
+		outpoints[output.OutPoint] = outputAddrs[0]
+	}
+
+	// If a start block stamp was provided, we will use that as the initial
+	// starting point for the rescan.
+	if startStamp == nil {
+		startStamp = &waddrmgr.BlockStamp{}
+		*startStamp = w.Manager.SyncedTo()
 	}
 
 	job := &RescanJob{
 		InitialSync: true,
 		Addrs:       addrs,
 		OutPoints:   outpoints,
-		BlockStamp:  w.Manager.SyncedTo(),
+		BlockStamp:  *startStamp,
 	}
 
 	// Submit merged job and block until rescan completes.

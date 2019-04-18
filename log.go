@@ -6,17 +6,19 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/btcsuite/btclog"
-	"github.com/btcsuite/btcrpcclient"
+	"github.com/jrick/logrotate/rotator"
+	"github.com/anchaj/neutrino"
+	"github.com/phoreproject/btcd/rpcclient"
 	"github.com/phoreproject/btcwallet/chain"
 	"github.com/phoreproject/btcwallet/rpc/legacyrpc"
 	"github.com/phoreproject/btcwallet/rpc/rpcserver"
 	"github.com/phoreproject/btcwallet/wallet"
 	"github.com/phoreproject/btcwallet/wtxmgr"
-	"github.com/jrick/logrotate/rotator"
 )
 
 // logWriter implements an io.Writer that outputs to both standard output and
@@ -25,7 +27,7 @@ type logWriter struct{}
 
 func (logWriter) Write(p []byte) (n int, err error) {
 	os.Stdout.Write(p)
-	logRotator.Write(p)
+	logRotatorPipe.Write(p)
 	return len(p), nil
 }
 
@@ -47,12 +49,17 @@ var (
 	// application shutdown.
 	logRotator *rotator.Rotator
 
+	// logRotatorPipe is the write-end pipe for writing to the log rotator.  It
+	// is written to by the Write method of the logWriter type.
+	logRotatorPipe *io.PipeWriter
+
 	log          = backendLog.Logger("BTCW")
 	walletLog    = backendLog.Logger("WLLT")
 	txmgrLog     = backendLog.Logger("TMGR")
 	chainLog     = backendLog.Logger("CHNS")
 	grpcLog      = backendLog.Logger("GRPC")
 	legacyRPCLog = backendLog.Logger("RPCS")
+	btcnLog      = backendLog.Logger("BTCN")
 )
 
 // Initialize package-global logger variables.
@@ -60,9 +67,10 @@ func init() {
 	wallet.UseLogger(walletLog)
 	wtxmgr.UseLogger(txmgrLog)
 	chain.UseLogger(chainLog)
-	btcrpcclient.UseLogger(chainLog)
+	rpcclient.UseLogger(chainLog)
 	rpcserver.UseLogger(grpcLog)
 	legacyrpc.UseLogger(legacyRPCLog)
+	neutrino.UseLogger(btcnLog)
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
@@ -73,6 +81,7 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"CHNS": chainLog,
 	"GRPC": grpcLog,
 	"RPCS": legacyRPCLog,
+	"BTCN": btcnLog,
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and
@@ -91,7 +100,11 @@ func initLogRotator(logFile string) {
 		os.Exit(1)
 	}
 
+	pr, pw := io.Pipe()
+	go r.Run(pr)
+
 	logRotator = r
+	logRotatorPipe = pw
 }
 
 // setLogLevel sets the logging level for provided subsystem.  Invalid

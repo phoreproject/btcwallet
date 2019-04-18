@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/ripemd160"
+
 	"github.com/phoreproject/btcd/btcec"
 	"github.com/phoreproject/btcd/chaincfg"
 	"github.com/phoreproject/btcd/chaincfg/chainhash"
@@ -29,7 +31,6 @@ import (
 	"github.com/phoreproject/btcd/wire"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/internal/legacy/rename"
-	"github.com/btcsuite/golangcrypto/ripemd160"
 )
 
 const (
@@ -478,10 +479,6 @@ func (net *netParams) ReadFrom(r io.Reader) (int64, error) {
 	switch wire.BitcoinNet(binary.LittleEndian.Uint32(uint32Bytes)) {
 	case wire.MainNet:
 		*net = (netParams)(chaincfg.MainNetParams)
-	case wire.TestNet3:
-		*net = (netParams)(chaincfg.TestNet3Params)
-	case wire.SimNet:
-		*net = (netParams)(chaincfg.SimNetParams)
 	default:
 		return n64, errors.New("unknown network")
 	}

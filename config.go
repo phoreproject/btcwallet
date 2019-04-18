@@ -13,13 +13,14 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/jessevdk/go-flags"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcwallet/internal/cfgutil"
 	"github.com/phoreproject/btcwallet/internal/legacy/keystore"
-	"github.com/phoreproject/btcwallet/netparams"
 	"github.com/phoreproject/btcwallet/wallet"
-	flags "github.com/jessevdk/go-flags"
+	"github.com/anchaj/neutrino"
 )
 
 const (
@@ -69,6 +70,14 @@ type config struct {
 	Proxy            string                  `long:"proxy" description:"Connect via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
 	ProxyUser        string                  `long:"proxyuser" description:"Username for proxy server"`
 	ProxyPass        string                  `long:"proxypass" default-mask:"-" description:"Password for proxy server"`
+
+	// SPV client options
+	UseSPV       bool          `long:"usespv" description:"Enables the experimental use of SPV rather than RPC for chain synchronization"`
+	AddPeers     []string      `short:"a" long:"addpeer" description:"Add a peer to connect with at startup"`
+	ConnectPeers []string      `long:"connect" description:"Connect only to the specified peers at startup"`
+	MaxPeers     int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
+	BanDuration  time.Duration `long:"banduration" description:"How long to ban misbehaving peers.  Valid time units are {s, m, h}.  Minimum 1 second"`
+	BanThreshold uint32        `long:"banthreshold" description:"Maximum allowed ban score before disconnecting and banning misbehaving peers."`
 
 	// RPC server options
 	//
@@ -257,6 +266,12 @@ func loadConfig() (*config, []string, error) {
 		LegacyRPCMaxClients:    defaultRPCMaxClients,
 		LegacyRPCMaxWebsockets: defaultRPCMaxWebsockets,
 		DataDir:                cfgutil.NewExplicitString(defaultAppDataDir),
+		UseSPV:                 false,
+		AddPeers:               []string{},
+		ConnectPeers:           []string{},
+		MaxPeers:               neutrino.MaxPeers,
+		BanDuration:            neutrino.BanDuration,
+		BanThreshold:           neutrino.BanThreshold,
 	}
 
 	// Pre-parse the command line options to see if an alternative config
@@ -336,26 +351,6 @@ func loadConfig() (*config, []string, error) {
 		if !cfg.RPCCert.ExplicitlySet() {
 			cfg.RPCCert.Value = filepath.Join(cfg.AppDataDir.Value, "rpc.cert")
 		}
-	}
-
-	// Choose the active network params based on the selected network.
-	// Multiple networks can't be selected simultaneously.
-	numNets := 0
-	if cfg.TestNet3 {
-		activeNet = &netparams.TestNet3Params
-		numNets++
-	}
-	if cfg.SimNet {
-		activeNet = &netparams.SimNetParams
-		numNets++
-	}
-	if numNets > 1 {
-		str := "%s: The testnet and simnet params can't be used " +
-			"together -- choose one"
-		err := fmt.Errorf(str, "loadConfig")
-		fmt.Fprintln(os.Stderr, err)
-		parser.WriteHelp(os.Stderr)
-		return nil, nil, err
 	}
 
 	// Append the network type to the log directory so it is "namespaced"
@@ -479,60 +474,67 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
-	if cfg.RPCConnect == "" {
-		cfg.RPCConnect = net.JoinHostPort("localhost", activeNet.RPCClientPort)
-	}
-
-	// Add default port to connect flag if missing.
-	cfg.RPCConnect, err = cfgutil.NormalizeAddress(cfg.RPCConnect,
-		activeNet.RPCClientPort)
-	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Invalid rpcconnect network address: %v\n", err)
-		return nil, nil, err
-	}
-
 	localhostListeners := map[string]struct{}{
 		"localhost": {},
 		"127.0.0.1": {},
 		"::1":       {},
 	}
-	RPCHost, _, err := net.SplitHostPort(cfg.RPCConnect)
-	if err != nil {
-		return nil, nil, err
-	}
-	if cfg.DisableClientTLS {
-		if _, ok := localhostListeners[RPCHost]; !ok {
-			str := "%s: the --noclienttls option may not be used " +
-				"when connecting RPC to non localhost " +
-				"addresses: %s"
-			err := fmt.Errorf(str, funcName, cfg.RPCConnect)
-			fmt.Fprintln(os.Stderr, err)
-			fmt.Fprintln(os.Stderr, usageMessage)
+
+	if cfg.UseSPV {
+		neutrino.MaxPeers = cfg.MaxPeers
+		neutrino.BanDuration = cfg.BanDuration
+		neutrino.BanThreshold = cfg.BanThreshold
+	} else {
+		if cfg.RPCConnect == "" {
+			cfg.RPCConnect = net.JoinHostPort("localhost", activeNet.RPCClientPort)
+		}
+
+		// Add default port to connect flag if missing.
+		cfg.RPCConnect, err = cfgutil.NormalizeAddress(cfg.RPCConnect,
+			activeNet.RPCClientPort)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Invalid rpcconnect network address: %v\n", err)
 			return nil, nil, err
 		}
-	} else {
-		// If CAFile is unset, choose either the copy or local btcd cert.
-		if !cfg.CAFile.ExplicitlySet() {
-			cfg.CAFile.Value = filepath.Join(cfg.AppDataDir.Value, defaultCAFilename)
 
-			// If the CA copy does not exist, check if we're connecting to
-			// a local btcd and switch to its RPC cert if it exists.
-			certExists, err := cfgutil.FileExists(cfg.CAFile.Value)
-			if err != nil {
+		RPCHost, _, err := net.SplitHostPort(cfg.RPCConnect)
+		if err != nil {
+			return nil, nil, err
+		}
+		if cfg.DisableClientTLS {
+			if _, ok := localhostListeners[RPCHost]; !ok {
+				str := "%s: the --noclienttls option may not be used " +
+					"when connecting RPC to non localhost " +
+					"addresses: %s"
+				err := fmt.Errorf(str, funcName, cfg.RPCConnect)
 				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(os.Stderr, usageMessage)
 				return nil, nil, err
 			}
-			if !certExists {
-				if _, ok := localhostListeners[RPCHost]; ok {
-					btcdCertExists, err := cfgutil.FileExists(
-						btcdDefaultCAFile)
-					if err != nil {
-						fmt.Fprintln(os.Stderr, err)
-						return nil, nil, err
-					}
-					if btcdCertExists {
-						cfg.CAFile.Value = btcdDefaultCAFile
+		} else {
+			// If CAFile is unset, choose either the copy or local btcd cert.
+			if !cfg.CAFile.ExplicitlySet() {
+				cfg.CAFile.Value = filepath.Join(cfg.AppDataDir.Value, defaultCAFilename)
+
+				// If the CA copy does not exist, check if we're connecting to
+				// a local btcd and switch to its RPC cert if it exists.
+				certExists, err := cfgutil.FileExists(cfg.CAFile.Value)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return nil, nil, err
+				}
+				if !certExists {
+					if _, ok := localhostListeners[RPCHost]; ok {
+						btcdCertExists, err := cfgutil.FileExists(
+							btcdDefaultCAFile)
+						if err != nil {
+							fmt.Fprintln(os.Stderr, err)
+							return nil, nil, err
+						}
+						if btcdCertExists {
+							cfg.CAFile.Value = btcdDefaultCAFile
+						}
 					}
 				}
 			}

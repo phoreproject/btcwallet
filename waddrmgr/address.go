@@ -10,9 +10,43 @@ import (
 	"sync"
 
 	"github.com/phoreproject/btcd/btcec"
+	"github.com/phoreproject/btcd/txscript"
 	"github.com/phoreproject/btcutil"
 	"github.com/phoreproject/btcutil/hdkeychain"
 	"github.com/phoreproject/btcwallet/internal/zero"
+	"github.com/phoreproject/btcwallet/walletdb"
+)
+
+// AddressType represents the various address types waddrmgr is currently able
+// to generate, and maintain.
+//
+// NOTE: These MUST be stable as they're used for scope address schema
+// recognition within the database.
+type AddressType uint8
+
+const (
+	// PubKeyHash is a regular p2pkh address.
+	PubKeyHash AddressType = iota
+
+	// Script reprints a raw script address.
+	Script
+
+	// RawPubKey is just raw public key to be used within scripts, This
+	// type indicates that a scoped manager with this address type
+	// shouldn't be consulted during historical rescans.
+	RawPubKey
+
+	// NestedWitnessPubKey represents a p2wkh output nested within a p2sh
+	// output. Using this address type, the wallet can receive funds from
+	// other wallet's which don't yet recognize the new segwit standard
+	// output types. Receiving funds to this address maintains the
+	// scalability, and malleability fixes due to segwit in a backwards
+	// compatible manner.
+	NestedWitnessPubKey
+
+	// WitnessPubKey represents a p2wkh (pay-to-witness-key-hash) address
+	// type.
+	WitnessPubKey
 )
 
 // ManagedAddress is an interface that provides acces to information regarding
@@ -41,7 +75,12 @@ type ManagedAddress interface {
 	Compressed() bool
 
 	// Used returns true if the backing address has been used in a transaction.
-	Used() (bool, error)
+	Used(ns walletdb.ReadBucket) bool
+
+	// AddrType returns the address type of the managed address. This can
+	// be used to quickly discern the address type without further
+	// processing
+	AddrType() AddressType
 }
 
 // ManagedPubKeyAddress extends ManagedAddress and additionally provides the
@@ -64,6 +103,12 @@ type ManagedPubKeyAddress interface {
 	// ExportPrivKey returns the private key associated with the address
 	// serialized as Wallet Import Format (WIF).
 	ExportPrivKey() (*btcutil.WIF, error)
+
+	// DerivationInfo contains the information required to derive the key
+	// that backs the address via traditional methods from the HD root. For
+	// imported keys, the first value will be set to false to indicate that
+	// we don't know exactly how the key was derived.
+	DerivationInfo() (KeyScope, DerivationPath, bool)
 }
 
 // ManagedScriptAddress extends ManagedAddress and represents a pay-to-script-hash
@@ -79,13 +124,14 @@ type ManagedScriptAddress interface {
 // managedAddress represents a public key address.  It also may or may not have
 // the private key associated with the public key.
 type managedAddress struct {
-	manager          *Manager
-	account          uint32
-	address          *btcutil.AddressPubKeyHash
+	manager          *ScopedKeyManager
+	derivationPath   DerivationPath
+	address          btcutil.Address
 	imported         bool
 	internal         bool
 	compressed       bool
 	used             bool
+	addrType         AddressType
 	pubKey           *btcec.PublicKey
 	privKeyEncrypted []byte
 	privKeyCT        []byte // non-nil if unlocked
@@ -135,7 +181,15 @@ func (a *managedAddress) lock() {
 //
 // This is part of the ManagedAddress interface implementation.
 func (a *managedAddress) Account() uint32 {
-	return a.account
+	return a.derivationPath.Account
+}
+
+// AddrType returns the address type of the managed address. This can be used
+// to quickly discern the address type without further processing
+//
+// This is part of the ManagedAddress interface implementation.
+func (a *managedAddress) AddrType() AddressType {
+	return a.addrType
 }
 
 // Address returns the btcutil.Address which represents the managed address.
@@ -150,7 +204,18 @@ func (a *managedAddress) Address() btcutil.Address {
 //
 // This is part of the ManagedAddress interface implementation.
 func (a *managedAddress) AddrHash() []byte {
-	return a.address.Hash160()[:]
+	var hash []byte
+
+	switch n := a.address.(type) {
+	case *btcutil.AddressPubKeyHash:
+		hash = n.Hash160()[:]
+	case *btcutil.AddressScriptHash:
+		hash = n.Hash160()[:]
+	case *btcutil.AddressWitnessPubKeyHash:
+		hash = n.Hash160()[:]
+	}
+
+	return hash
 }
 
 // Imported returns true if the address was imported instead of being part of an
@@ -179,8 +244,8 @@ func (a *managedAddress) Compressed() bool {
 // Used returns true if the address has been used in a transaction.
 //
 // This is part of the ManagedAddress interface implementation.
-func (a *managedAddress) Used() (bool, error) {
-	return a.manager.fetchUsed(a.AddrHash())
+func (a *managedAddress) Used(ns walletdb.ReadBucket) bool {
+	return a.manager.fetchUsed(ns, a.AddrHash())
 }
 
 // PubKey returns the public key associated with the address.
@@ -213,7 +278,7 @@ func (a *managedAddress) ExportPubKey() string {
 // This is part of the ManagedPubKeyAddress interface implementation.
 func (a *managedAddress) PrivKey() (*btcec.PrivateKey, error) {
 	// No private keys are available for a watching-only address manager.
-	if a.manager.watchingOnly {
+	if a.manager.rootManager.WatchOnly() {
 		return nil, managerError(ErrWatchingOnly, errWatchingOnly, nil)
 	}
 
@@ -221,14 +286,14 @@ func (a *managedAddress) PrivKey() (*btcec.PrivateKey, error) {
 	defer a.manager.mtx.Unlock()
 
 	// Account manager must be unlocked to decrypt the private key.
-	if a.manager.locked {
+	if a.manager.rootManager.IsLocked() {
 		return nil, managerError(ErrLocked, errLocked, nil)
 	}
 
 	// Decrypt the key as needed.  Also, make sure it's a copy since the
 	// private key stored in memory can be cleared at any time.  Otherwise
 	// the returned private key could be invalidated from under the caller.
-	privKeyCopy, err := a.unlock(a.manager.cryptoKeyPriv)
+	privKeyCopy, err := a.unlock(a.manager.rootManager.cryptoKeyPriv)
 	if err != nil {
 		return nil, err
 	}
@@ -248,13 +313,37 @@ func (a *managedAddress) ExportPrivKey() (*btcutil.WIF, error) {
 		return nil, err
 	}
 
-	return btcutil.NewWIF(pk, a.manager.chainParams, a.compressed)
+	return btcutil.NewWIF(pk, a.manager.rootManager.chainParams, a.compressed)
+}
+
+// Derivationinfo contains the information required to derive the key that
+// backs the address via traditional methods from the HD root. For imported
+// keys, the first value will be set to false to indicate that we don't know
+// exactly how the key was derived.
+//
+// This is part of the ManagedPubKeyAddress interface implementation.
+func (a *managedAddress) DerivationInfo() (KeyScope, DerivationPath, bool) {
+	var (
+		scope KeyScope
+		path  DerivationPath
+	)
+
+	// If this key is imported, then we can't return any information as we
+	// don't know precisely how the key was derived.
+	if a.imported {
+		return scope, path, false
+	}
+
+	return a.manager.Scope(), a.derivationPath, true
 }
 
 // newManagedAddressWithoutPrivKey returns a new managed address based on the
 // passed account, public key, and whether or not the public key should be
 // compressed.
-func newManagedAddressWithoutPrivKey(m *Manager, account uint32, pubKey *btcec.PublicKey, compressed bool) (*managedAddress, error) {
+func newManagedAddressWithoutPrivKey(m *ScopedKeyManager,
+	derivationPath DerivationPath, pubKey *btcec.PublicKey, compressed bool,
+	addrType AddressType) (*managedAddress, error) {
+
 	// Create a pay-to-pubkey-hash address from the public key.
 	var pubKeyHash []byte
 	if compressed {
@@ -262,17 +351,68 @@ func newManagedAddressWithoutPrivKey(m *Manager, account uint32, pubKey *btcec.P
 	} else {
 		pubKeyHash = btcutil.Hash160(pubKey.SerializeUncompressed())
 	}
-	address, err := btcutil.NewAddressPubKeyHash(pubKeyHash, m.chainParams)
-	if err != nil {
-		return nil, err
+
+	var address btcutil.Address
+	var err error
+
+	switch addrType {
+
+	case NestedWitnessPubKey:
+		// For this address type we'l generate an address which is
+		// backwards compatible to Bitcoin nodes running 0.6.0 onwards, but
+		// allows us to take advantage of segwit's scripting improvments,
+		// and malleability fixes.
+
+		// First, we'll generate a normal p2wkh address from the pubkey hash.
+		witAddr, err := btcutil.NewAddressWitnessPubKeyHash(
+			pubKeyHash, m.rootManager.chainParams,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Next we'll generate the witness program which can be used as a
+		// pkScript to pay to this generated address.
+		witnessProgram, err := txscript.PayToAddrScript(witAddr)
+		if err != nil {
+			return nil, err
+		}
+
+		// Finally, we'll use the witness program itself as the pre-image
+		// to a p2sh address. In order to spend, we first use the
+		// witnessProgram as the sigScript, then present the proper
+		// <sig, pubkey> pair as the witness.
+		address, err = btcutil.NewAddressScriptHash(
+			witnessProgram, m.rootManager.chainParams,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+	case PubKeyHash:
+		address, err = btcutil.NewAddressPubKeyHash(
+			pubKeyHash, m.rootManager.chainParams,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+	case WitnessPubKey:
+		address, err = btcutil.NewAddressWitnessPubKeyHash(
+			pubKeyHash, m.rootManager.chainParams,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &managedAddress{
 		manager:          m,
 		address:          address,
-		account:          account,
+		derivationPath:   derivationPath,
 		imported:         false,
 		internal:         false,
+		addrType:         addrType,
 		compressed:       compressed,
 		pubKey:           pubKey,
 		privKeyEncrypted: nil,
@@ -283,13 +423,16 @@ func newManagedAddressWithoutPrivKey(m *Manager, account uint32, pubKey *btcec.P
 // newManagedAddress returns a new managed address based on the passed account,
 // private key, and whether or not the public key is compressed.  The managed
 // address will have access to the private and public keys.
-func newManagedAddress(m *Manager, account uint32, privKey *btcec.PrivateKey, compressed bool) (*managedAddress, error) {
+func newManagedAddress(s *ScopedKeyManager, derivationPath DerivationPath,
+	privKey *btcec.PrivateKey, compressed bool,
+	addrType AddressType) (*managedAddress, error) {
+
 	// Encrypt the private key.
 	//
 	// NOTE: The privKeyBytes here are set into the managed address which
 	// are cleared when locked, so they aren't cleared here.
 	privKeyBytes := privKey.Serialize()
-	privKeyEncrypted, err := m.cryptoKeyPriv.Encrypt(privKeyBytes)
+	privKeyEncrypted, err := s.rootManager.cryptoKeyPriv.Encrypt(privKeyBytes)
 	if err != nil {
 		str := "failed to encrypt private key"
 		return nil, managerError(ErrCrypto, str, err)
@@ -298,8 +441,9 @@ func newManagedAddress(m *Manager, account uint32, privKey *btcec.PrivateKey, co
 	// Leverage the code to create a managed address without a private key
 	// and then add the private key to it.
 	ecPubKey := (*btcec.PublicKey)(&privKey.PublicKey)
-	managedAddr, err := newManagedAddressWithoutPrivKey(m, account,
-		ecPubKey, compressed)
+	managedAddr, err := newManagedAddressWithoutPrivKey(
+		s, derivationPath, ecPubKey, compressed, addrType,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +457,10 @@ func newManagedAddress(m *Manager, account uint32, privKey *btcec.PrivateKey, co
 // account and extended key.  The managed address will have access to the
 // private and public keys if the provided extended key is private, otherwise it
 // will only have access to the public key.
-func newManagedAddressFromExtKey(m *Manager, account uint32, key *hdkeychain.ExtendedKey) (*managedAddress, error) {
+func newManagedAddressFromExtKey(s *ScopedKeyManager,
+	derivationPath DerivationPath, key *hdkeychain.ExtendedKey,
+	addrType AddressType) (*managedAddress, error) {
+
 	// Create a new managed address based on the public or private key
 	// depending on whether the generated key is private.
 	var managedAddr *managedAddress
@@ -323,9 +470,11 @@ func newManagedAddressFromExtKey(m *Manager, account uint32, key *hdkeychain.Ext
 			return nil, err
 		}
 
-		// Ensure the temp private key big integer is cleared after use.
-		managedAddr, err = newManagedAddress(m, account, privKey, true)
-		zero.BigInt(privKey.D)
+		// Ensure the temp private key big integer is cleared after
+		// use.
+		managedAddr, err = newManagedAddress(
+			s, derivationPath, privKey, true, addrType,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -335,8 +484,10 @@ func newManagedAddressFromExtKey(m *Manager, account uint32, key *hdkeychain.Ext
 			return nil, err
 		}
 
-		managedAddr, err = newManagedAddressWithoutPrivKey(m, account,
-			pubKey, true)
+		managedAddr, err = newManagedAddressWithoutPrivKey(
+			s, derivationPath, pubKey, true,
+			addrType,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -347,7 +498,7 @@ func newManagedAddressFromExtKey(m *Manager, account uint32, key *hdkeychain.Ext
 
 // scriptAddress represents a pay-to-script-hash address.
 type scriptAddress struct {
-	manager         *Manager
+	manager         *ScopedKeyManager
 	account         uint32
 	address         *btcutil.AddressScriptHash
 	scriptEncrypted []byte
@@ -401,6 +552,14 @@ func (a *scriptAddress) Account() uint32 {
 	return a.account
 }
 
+// AddrType returns the address type of the managed address. This can be used
+// to quickly discern the address type without further processing
+//
+// This is part of the ManagedAddress interface implementation.
+func (a *scriptAddress) AddrType() AddressType {
+	return Script
+}
+
 // Address returns the btcutil.Address which represents the managed address.
 // This will be a pay-to-script-hash address.
 //
@@ -410,8 +569,6 @@ func (a *scriptAddress) Address() btcutil.Address {
 }
 
 // AddrHash returns the script hash for the address.
-//
-// This is part of the ManagedAddress interface implementation.
 //
 // This is part of the ManagedAddress interface implementation.
 func (a *scriptAddress) AddrHash() []byte {
@@ -444,8 +601,8 @@ func (a *scriptAddress) Compressed() bool {
 // Used returns true if the address has been used in a transaction.
 //
 // This is part of the ManagedAddress interface implementation.
-func (a *scriptAddress) Used() (bool, error) {
-	return a.manager.fetchUsed(a.AddrHash())
+func (a *scriptAddress) Used(ns walletdb.ReadBucket) bool {
+	return a.manager.fetchUsed(ns, a.AddrHash())
 }
 
 // Script returns the script associated with the address.
@@ -453,7 +610,7 @@ func (a *scriptAddress) Used() (bool, error) {
 // This implements the ScriptAddress interface.
 func (a *scriptAddress) Script() ([]byte, error) {
 	// No script is available for a watching-only address manager.
-	if a.manager.watchingOnly {
+	if a.manager.rootManager.WatchOnly() {
 		return nil, managerError(ErrWatchingOnly, errWatchingOnly, nil)
 	}
 
@@ -461,20 +618,23 @@ func (a *scriptAddress) Script() ([]byte, error) {
 	defer a.manager.mtx.Unlock()
 
 	// Account manager must be unlocked to decrypt the script.
-	if a.manager.locked {
+	if a.manager.rootManager.IsLocked() {
 		return nil, managerError(ErrLocked, errLocked, nil)
 	}
 
 	// Decrypt the script as needed.  Also, make sure it's a copy since the
 	// script stored in memory can be cleared at any time.  Otherwise,
 	// the returned script could be invalidated from under the caller.
-	return a.unlock(a.manager.cryptoKeyScript)
+	return a.unlock(a.manager.rootManager.cryptoKeyScript)
 }
 
 // newScriptAddress initializes and returns a new pay-to-script-hash address.
-func newScriptAddress(m *Manager, account uint32, scriptHash, scriptEncrypted []byte) (*scriptAddress, error) {
-	address, err := btcutil.NewAddressScriptHashFromHash(scriptHash,
-		m.chainParams)
+func newScriptAddress(m *ScopedKeyManager, account uint32, scriptHash,
+	scriptEncrypted []byte) (*scriptAddress, error) {
+
+	address, err := btcutil.NewAddressScriptHashFromHash(
+		scriptHash, m.rootManager.chainParams,
+	)
 	if err != nil {
 		return nil, err
 	}

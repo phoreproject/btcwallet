@@ -19,10 +19,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/btcsuite/websocket"
 	"github.com/phoreproject/btcd/btcjson"
 	"github.com/phoreproject/btcwallet/chain"
 	"github.com/phoreproject/btcwallet/wallet"
-	"github.com/btcsuite/websocket"
 )
 
 type websocketClient struct {
@@ -61,7 +61,7 @@ type Server struct {
 	httpServer    http.Server
 	wallet        *wallet.Wallet
 	walletLoader  *wallet.Loader
-	chainClient   *chain.RPCClient
+	chainClient   chain.Interface
 	handlerLookup func(string) (requestHandler, bool)
 	handlerMu     sync.Mutex
 
@@ -258,7 +258,7 @@ func (s *Server) Stop() {
 // functional bitcoin wallet RPC server.  This can be called to enable RPC
 // passthrough even before a loaded wallet is set, but the wallet's RPC client
 // is preferred.
-func (s *Server) SetChainServer(chainClient *chain.RPCClient) {
+func (s *Server) SetChainServer(chainClient chain.Interface) {
 	s.handlerMu.Lock()
 	s.chainClient = chainClient
 	s.handlerMu.Unlock()
